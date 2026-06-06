@@ -1,0 +1,86 @@
+name: Codex Windows build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or SHA to build
+        required: true
+        default: codex/fix-windows-app-split-tunnel
+
+env:
+  QT_VERSION: 6.10.1
+  QIF_VERSION: 4.7
+  QT_MIRROR: https://mirrors.ocf.berkeley.edu/qt/
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Get sources
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          fetch-depth: 10
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtremoteobjects qt5compat qtshadertools
+          dir: ${{ runner.temp }}
+          setup-python: true
+          tools: tools_ifw
+          set-env: true
+          aqtversion: ==3.3.0
+          py7zrversion: ==0.22.*
+          extra: --base ${{ env.QT_MIRROR }}
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install WiX Toolset
+        shell: powershell
+        run: |
+          dotnet tool install --global wix --version 4.0.6
+          wix extension add -g WixToolset.UI.wixext/4.0.6
+          wix extension add -g WixToolset.Util.wixext/4.0.6
+          $wixBinDir = Join-Path $env:USERPROFILE ".dotnet\tools"
+          "WIX_BIN_DIR=$wixBinDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Conan
+        run: pip install "conan==2.28.0"
+
+      - name: Build installers
+        shell: cmd
+        env:
+          QT_INSTALL_DIR: ${{ runner.temp }}
+          WIX_ROOT_PATH: ${{ env.WIX_BIN_DIR }}
+        run: deploy\build.bat --installer all
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmneziaVPN-windows-pr2691
+          path: |
+            deploy/build/AmneziaVPN_*_windows_x64.exe
+            deploy/build/AmneziaVPN_*_windows_x64.msi
+          if-no-files-found: error
+          retention-days: 7
